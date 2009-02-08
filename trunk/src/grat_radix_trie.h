@@ -45,10 +45,12 @@ extern "C" {
 #include <string.h>
 #include <unistd.h>
 
-// FIXME: make an init function that allocates four bytes to use as an "EMPTY" flag
-//        instead of using NULL for everything
-// TODO: differentiate between internal 'longest match' and public 'longest match' as the public
-//       'longest match' should never return an empty/branch node
+/*
+ *  FIXME: make an init function that allocates four bytes to use as an "EMPTY" flag
+ *      instead of using NULL for everything
+ *  TODO: differentiate between internal 'longest match' and public 'longest match' as the public
+ *      'longest match' should never return an empty/branch node
+ */
 
 // STRING UTIL PROTOTYPES
 // FIXME: make this conditional on having/not having strlcat & co
@@ -75,8 +77,8 @@ typedef struct radix_node {
 typedef struct {
     radix_t *root_node;
     radix_t *node;
-    int     depth;
-    int     count;
+    size_t  depth;
+    size_t  count;
 } radix_iterator_t;
 
 typedef void(*trie_value_callback)(void *value);
@@ -84,9 +86,9 @@ typedef void(*trie_value_callback)(void *value);
 // PUBLIC METHOD DEFINITIONS/PROTOTYPES
 radix_t * trie_new ();
 void trie_destroy (radix_t *trie);
-void * trie_set_val (radix_t *root_node, const char *key, void *val );
-void * trie_get_val (radix_t *root_node, const char *key);
-void * trie_delete_key (radix_t *root_node, const char *key);
+void * trie_set (radix_t *root_node, const char *key, void *val );
+void * trie_get (radix_t *root_node, const char *key);
+void * trie_delete (radix_t *root_node, const char *key);
 void * trie_get_longest_match (radix_t *root_node, const char *key, char **remainder);
 int trie_recurse_prefix (radix_t *root_node, const char *prefix, trie_value_callback callback);
 int trie_recurse (radix_t *root_node, trie_value_callback callback);
@@ -118,9 +120,50 @@ _trie_free_node (radix_t *node) {
     return;
 }
 
+inline void
+_trie_add_child (radix_t *parent, radix_t *new_child) {
+    radix_t *child = parent->child;
+
+    if (parent->child == NULL) {
+        parent->child = new_child;
+        return;
+    }
+
+    // find the first child we're not smaller than (what node we should be in front of)
+    //      examples:
+    //          inserting 'a' into ('b', 'c')
+    //          inserting 'b' into ('a', 'c')
+    //          inserting 'c' into ('a', 'b')
+    //          inserting 'a' into ('b')
+    //          inserting 'b' into ('a')
+    while (child->right != NULL && new_child->key[0] < child->right->key[0]) {
+        child = child->right;
+    }
+
+    // we may not find a sibling that we should come in front of
+    //      (i.e. inserting 'c' into ('a','b','c'))
+    if (new_child->key[0] < child->key[0]) {
+        // we should be inserted *before* the existing child
+        new_child->right = child;
+        new_child->left = child->left;
+        child->left = new_child;
+        if (new_child->left != NULL) {
+            new_child->left->right = new_child;
+        }
+    } else {
+        // we should be inserted *after* the existing child
+        new_child->left = child;
+        new_child->right = child->right;
+        child->right = new_child;
+        if (new_child->right != NULL) {
+            new_child->right->left = new_child;
+        }
+    }
+}
+
 inline int
 _trie_string_cmp (const char *a, const char *b) {
-    int bytes = 0;
+    size_t bytes = 0;
 
     while (a[bytes] != '\0' && b[bytes] != '\0' && a[bytes] == b[bytes]) {
         bytes++;
@@ -139,9 +182,10 @@ _trie_get_longest_match (
         const char *key_input,
         radix_t **full_match_node,
         radix_t **partial_match_node,
-        int *len_match
+        size_t *len_match
     ) {
-    int match_len, i;
+    int i;
+    size_t match_len;
     char *path;
     
     path = (char *)key_input;
@@ -188,6 +232,79 @@ _trie_get_longest_match (
 
     len_match = &match_len;
     return path;
+}
+
+// split one node into two, using the first 'len' bytes of the key to make the new parent
+radix_t *
+_trie_split_node(radix_t *node, size_t len) {
+    radix_t *new_child;
+    char *new_key;
+    int i;
+
+    // kind of a dumb check..  if this were true we would have found this node as a full match
+    if (node->key[len] == 0) {
+        return node;
+    }
+
+    new_key = node->key;
+    for (i = 0; i < len; i++) {
+        (void)*new_key++;
+    }
+    new_child = _trie_new_node(new_key);
+    new_child->child = node->child;
+    _trie_add_child(node, new_child);
+
+    // wipe out the value because it's associated with the end of the key
+    node->val = NULL;
+
+    // make a new key, free the old one, and set the new one.
+    new_key = strndup(node->key, len);
+    free(node->key);
+    node->key = new_key;
+
+    return node;
+}
+
+radix_t *
+_trie_get_or_create_node (radix_t *root_node, const char *path_input) {
+    radix_t *full_match_node, *partial_match_node, *new_node;
+    char *remainder;
+    size_t len_match;
+
+    if (path_input[0] == 0) {
+        return root_node;
+    }
+
+    remainder = _trie_get_longest_match(root_node, path_input, &full_match_node,
+            &partial_match_node, &len_match);
+
+    if (remainder[0] == 0 && len_match != 0 && partial_match_node == full_match_node &&
+            full_match_node->key[len_match] == 0) {
+        // the path was matched completely:
+        //      * no remainder
+        //      * partial and full match are the same
+        return full_match_node;
+    }
+
+    if (len_match == 0) {
+        // the last node tried didn't match at all, so we're likely a new child of the full match
+        // (which would be the root_node if nothing else)
+        new_node = _trie_new_node(remainder);
+        _trie_add_child(full_match_node, new_node);
+        return new_node;
+    }
+
+    // at this point the last node matched partially, so we need to split the node that partially
+    //      matched
+    partial_match_node = _trie_split_node(partial_match_node, len_match);
+    if (remainder[0]) {
+        // some of the path was left, so we're a sibling of the second part of the partial match
+        new_node = _trie_new_node(remainder);
+        _trie_add_child(full_match_node, new_node);
+        return new_node;
+    }
+
+    return partial_match_node;
 }
 
 // merge a child with no siblings into its parent
@@ -396,14 +513,14 @@ trie_destroy (radix_t *root_node) {
 
 // returns the value that was set
 void *
-trie_set_val (radix_t *root_node, const char *key, void *val ) {
+trie_set (radix_t *root_node, const char *key, void *val ) {
     // FIXME: if node is being set to NULL, treat as delete(?)
     return NULL;
 }
 
 // returns the value associated with the key, or NULL
 void *
-trie_get_val (radix_t *root_node, const char *key) {
+trie_get (radix_t *root_node, const char *key) {
     char *remainder;
     void *val;
 
@@ -416,13 +533,28 @@ trie_get_val (radix_t *root_node, const char *key) {
 
 // returns the value contained by key after deleting node
 void *
-trie_delete_key (radix_t *root_node, const char *key) {
+trie_delete (radix_t *root_node, const char *key) {
     return NULL;
 }
 
 // returns the value that was found and key remainder
 void *
-trie_get_longest_match (radix_t *root_node, const char *key, char **remainder) {
+trie_get_longest_match (radix_t *root_node, const char *key, char **full_match_remainder) {
+    char *remainder;
+    radix_t *full_match_node, *partial_match_node;
+    size_t len_match;
+
+    remainder = _trie_get_longest_match(root_node, key, &full_match_node,
+            &partial_match_node, &len_match);
+
+    // partial match was the same
+    if (partial_match_node == full_match_node) {
+        *full_match_remainder = remainder;
+        return full_match_node->val;
+    }
+
+    // 
+
     return NULL;
 }
 
@@ -541,6 +673,57 @@ _grat_trie_strlcat(char *dst, const char *src, size_t siz)
         *d = '\0';
 
         return(dlen + (s - src));        /* count does not include NUL */
+}
+
+/*  $NetBSD: strndup.c,v 1.4 2007/07/03 12:11:09 nakayama Exp $ */
+/*
+ * Copyright (c) 1988, 1993
+ *  The Regents of the University of California.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+#include <assert.h>
+
+char  *
+_grat_trie_strndup (const char *str, size_t max) {
+    char *copy;
+    size_t len;
+
+    assert(str != NULL);
+
+    for (len = 0; len < max; len++) {
+        continue;
+    }
+
+    if (!(copy = (char *)malloc(len + 1))) {
+        return NULL;
+    }
+    memcpy(copy, str, len);
+    copy[len] = '\0';
+    return copy;
 }
 
 // END STRING UTIL IMPLEMENTATIONS
