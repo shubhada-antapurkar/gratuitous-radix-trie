@@ -23,6 +23,7 @@ int tests_run = 0;
 radix_t *trie = NULL;
 radix_t *trie2 = NULL;
 
+/*
 static char *
 test_new_trie() {
     trie = trie_new();
@@ -58,9 +59,36 @@ all_tests() {
     mu_run_test(test_set_get_and_delete);
     return 0;
 }
+*/
+
+void
+dump_subtree (radix_t *node, const int depth) {
+    int i;
+
+    //sleep(1);
+
+    if (node == NULL) {
+        return;
+    }
+
+    /* indentation for fun and profit */
+    for (i = 0; i < depth; i++) {
+        printf("  ");
+    }
+    printf("'%s', '%s'\n", node->key, (char *)node->val);
+
+    /* now dump our children */
+    dump_subtree(node->child, depth + 1);
+
+    /* then dump our siblings, if we have any */
+    dump_subtree(node->right, depth);
+}
+
 
 int
 main(int argc, char **argv) {
+    char *value;
+    /*
     char *result = all_tests();
     if (result != 0) {
         printf("SOME TESTS FAILED\n");
@@ -68,8 +96,37 @@ main(int argc, char **argv) {
         printf("ALL TESTS PASSED\n");
     }
     printf("Tests run: %d\n", tests_run);
+    printf("\n");
+    */
 
-    return result != 0;
+    trie = trie_new();
+
+    value = trie_set_key(trie, "superlative", "1");
+    value = trie_set_key(trie, "super", "2");
+    value = trie_set_key(trie, "supper", "3");
+    value = trie_set_key(trie, "soup", "4");
+    value = trie_set_key(trie, "also", "5");
+    /*
+    */
+    value = trie_set_key(trie, "allison", "6");
+    value = trie_set_key(trie, "baker", "7");
+    value = trie_set_key(trie, "break", "8");
+    value = trie_set_key(trie, "fred", "9");
+    value = trie_set_key(trie, "frank", "10");
+    //value = trie_set_key(trie, "frankly", "11");
+    value = trie_set_key(trie, "", "12");
+    value = trie_set_key(trie, "crook", "13");
+    value = trie_set_key(trie, "crazy", "14");
+    value = trie_set_key(trie, "joe", "14");
+    //_trie_dump_contents(trie);
+    dump_subtree(trie, 0);
+    _trie_dump_contents(trie);
+
+    trie_destroy(trie);
+
+
+    //return result != 0;
+    return 0;
 }
 
 /* gcc -g -Wall test.c -o test */
