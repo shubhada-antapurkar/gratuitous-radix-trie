@@ -1,0 +1,53 @@
+# insert new node
+1. lane
+# insert new node after existing sibling
+1. lane
+2. line
+# insert new node before existing sibling
+1. lone
+2. line
+# insert new node between siblings
+1. lane
+2. lone
+3. line
+# delete node
+1. lane
+2. -lane
+# fail to get branch node
+1. lower
+2. lowly
+3. -low
+# delete node between existing siblings
+1. lane
+2. line
+3. lone
+4. -line
+# insert node as child of existing node
+1. total
+2. totally
+# insert node as parent of existing node (split node's key and insert node)
+1. totally
+2. total
+# insert node as parent of one existing node and child of another existing node
+1. totally
+2. tot
+3. total
+# delete node that is a child of a node
+1. total
+2. totally
+3. -totally
+# delete node that is a parent of a node
+1. total
+2. totally
+3. -total
+# delete node that is a parent of one node and a child of another
+1. a
+2. an
+3. ant
+4. -an
+# delete node that has more than one child
+1. to
+2. took
+3. toot
+4. -to
+
