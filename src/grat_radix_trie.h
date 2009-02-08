@@ -82,6 +82,7 @@ typedef struct radix_node {
 typedef struct {
     radix_t *root_node;
     radix_t *node;
+    radix_t *next_node;
     size_t  depth;
     size_t  count;
 } radix_iterator_t;
@@ -129,6 +130,7 @@ inline void
 _trie_add_child (radix_t *parent, radix_t *new_child) {
     radix_t *child = parent->child;
 
+    new_child->parent = parent;
     if (parent->child == NULL) {
         parent->child = new_child;
         return;
@@ -141,7 +143,7 @@ _trie_add_child (radix_t *parent, radix_t *new_child) {
     //          inserting 'c' into ('a', 'b')
     //          inserting 'a' into ('b')
     //          inserting 'b' into ('a')
-    while (child->right != NULL && new_child->key[0] < child->right->key[0]) {
+    while (child->right != NULL && new_child->key[0] > child->right->key[0]) {
         child = child->right;
     }
 
@@ -152,8 +154,13 @@ _trie_add_child (radix_t *parent, radix_t *new_child) {
         new_child->right = child;
         new_child->left = child->left;
         child->left = new_child;
+
         if (new_child->left != NULL) {
+            // new_child is not the first sibling
             new_child->left->right = new_child;
+        } else {
+            // new_child is the first sibling, update the parent to point to new_child first
+            new_child->parent->child = new_child;
         }
     } else {
         // we should be inserted *after* the existing child
@@ -192,7 +199,7 @@ _trie_get_longest_match (
     size_t i;
     size_t match_len;
     char *path;
-    
+
     path = (char *)key_input;
     match_len = 0;
 
@@ -227,7 +234,7 @@ _trie_get_longest_match (
             }
 
         } else {
-            if (node->right != NULL && node->right->key[0] > path[0]) {
+            if (node->right != NULL && path[0] >= node->right->key[0]) {
                 node = node->right;
             } else {
                 break;
@@ -272,21 +279,22 @@ _trie_split_node(radix_t *node, size_t len) {
         return node;
     }
 
+    // make a new key for the child
     new_key = node->key;
     for (i = 0; i < len; i++) {
         (void)*new_key++;
     }
     new_child = _trie_new_node(new_key);
+    new_child->val = node->val;
     new_child->child = node->child;
-    _trie_add_child(node, new_child);
+    new_child->parent = node;
 
-    // wipe out the value because it's associated with the end of the key
-    node->val = NULL;
-
-    // make a new key, free the old one, and set the new one.
+    // make a new key for the new parent node
     new_key = strndup(node->key, len);
     free(node->key);
     node->key = new_key;
+    node->val = NULL; // wipe out the value because it's associated with the end of the key
+    node->child = new_child;
 
     return node;
 }
@@ -326,7 +334,7 @@ _trie_get_or_create_node (radix_t *root_node, const char *path_input) {
     if (remainder[0]) {
         // some of the path was left, so we're a sibling of the second part of the partial match
         new_node = _trie_new_node(remainder);
-        _trie_add_child(full_match_node, new_node);
+        _trie_add_child(partial_match_node, new_node);
         return new_node;
     }
 
@@ -458,8 +466,19 @@ _trie_new_iterator (radix_t *root_node) {
     radix_iterator_t *iter = (radix_iterator_t*)malloc(sizeof(radix_iterator_t));
 
     iter->depth = 0;
+    iter->count = 0;
     iter->root_node = root_node;
     iter->node = root_node;
+    iter->next_node = root_node->child;
+
+    // save for c++
+    // maintain an array of nodes to visit
+    // push the first node onto the array
+    // while the array has nodes
+    //      read the first node
+    //      if the node has children
+    //          push the children onto the array
+    //      deal with node
 
     return iter;
 }
@@ -469,23 +488,21 @@ _trie_destroy_iterator (radix_iterator_t *iter) {
     free(iter);
 }
 
-radix_t *
+inline radix_t *
 _trie_next_node (radix_iterator_t *iter) {
-    int num_found, depth;
-    radix_t *node = iter->node;
+    radix_t *node;
+    
+    node = iter->node = iter->next_node;
+    iter->next_node = NULL;
 
-    num_found = depth = 0;
 
     // begin ugly if/else if/else if/else loop!
-    if (iter->node == NULL) {
+    if (node == NULL) {
         return NULL;
-    } else if (iter->count++ == 0) {
-        // use the starter node the first time
-        return iter->node;
     } else if (node->child != NULL) {
         // look at children first
-        iter->node = node->child;
-        depth++;
+        node = node->child;
+        iter->depth++;
     } else if (node->right != NULL) {
         // then siblings
         node = node->right;
@@ -493,21 +510,23 @@ _trie_next_node (radix_iterator_t *iter) {
         // then try to find an ancestor's sibling
         if (node->parent->right != NULL) {
             node = node->parent->right;
-            depth--;
+            iter->depth--;
         } else {
-            while (node->parent != NULL && node->parent->right == NULL) {
+            while (node != iter->root_node && node->parent->right == NULL) {
                 // keep going up until we find either the root node or a parent that has a
                 // sibling
-                depth--;
+                iter->depth--;
                 node = node->parent;
             }
-            // using the sibling of parent
-            node = node->right;
+            // we've either found a root node or a parent with a sibling
+            if (node != iter->root_node) {
+                node = node->right;
+            }
         }
     }
 
-    if (node->parent == NULL) {
-        iter->node = NULL;
+    if (iter->node == iter->root_node) {
+        node = NULL;
     }
 
     if (iter->depth < 0) {
@@ -515,7 +534,35 @@ _trie_next_node (radix_iterator_t *iter) {
         iter->node = NULL;
     }
 
+    iter->count++;
+
+    iter->next_node = node;
     return iter->node;
+}
+
+void
+_trie_dump_contents (radix_t *root_node) {
+    radix_iterator_t *iter = _trie_new_iterator(root_node);
+    radix_t *node;
+
+    node = _trie_next_node(iter);
+    while (node != NULL) {
+        printf("%s: %s\n", node->key, (char *)node->val);
+        node = _trie_next_node(iter);
+    }
+    _trie_destroy_iterator(iter);
+}
+
+// FIXME: this could be a very large stack...  find a better solution
+void
+_trie_recursively_free(radix_t *node) {
+    if (node == NULL) {
+        return;
+    }
+
+    _trie_recursively_free(node->child);
+    _trie_recursively_free(node->right);
+    _trie_free_node(node);
 }
 
 // PUBLIC METHOD IMPLEMENTATIONS
@@ -528,11 +575,7 @@ trie_new () {
 
 void
 trie_destroy (radix_t *root_node) {
-    if (root_node->parent == NULL) {
-        // recursively free nodes
-    } else {
-        // FIXME: EXCEPTION HERE
-    }
+    _trie_recursively_free(root_node);
 }
 
 // returns the value that was set
