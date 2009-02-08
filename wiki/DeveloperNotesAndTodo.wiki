@@ -1,0 +1,29 @@
+#summary Development notes, thoughts
+
+= Development Notes =
+What to do, how to do it, problems that might be encountered while writing this library
+
+== interfaces ==
+ * set
+ * get
+   * get longest matching, discard if any remainder in lookup key
+ * longest matching
+ * delete
+ * iterator (reentrant?)
+   * what happens when user A's current/next node is/are deleted?
+   * depth-first (to provide alphabetical order)
+ * (maybe, but likely not) node->key
+   * create on demand, client has to free(?)
+   * collect array of elements, walking node and its parents
+   * get length of combined elements, allocate
+   * concatenate elements together
+
+== features ==
+ * in-order insertion
+   * during comparison, if input[i] != node->key[i]
+   * find the first node->key[i] that input[i] is greater than
+   * insert there
+
+== problems ==
+ * using NULL everywhere is dumb; how to differentiate between a key that was set with a NULL value and an empty node?
+ * how to return a 'key not found' err to the caller?
