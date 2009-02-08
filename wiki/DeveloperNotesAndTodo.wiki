@@ -10,13 +10,18 @@ What to do, how to do it, problems that might be encountered while writing this 
  * longest matching
  * delete
  * iterator (reentrant?)
-   * what happens when user A's current/next node is/are deleted?
+   * what happens when user's current/next node is/are deleted?
    * depth-first (to provide alphabetical order)
- * (maybe, but likely not) node->key
+ * (not likely) node->key
    * create on demand, client has to free(?)
    * collect array of elements, walking node and its parents
    * get length of combined elements, allocate
    * concatenate elements together
+
+== todo ==
+ * tests (once more complete)
+ * performance integration
+ * single header file (no strl_string_utils.[ch])
 
 == features ==
  * in-order insertion
