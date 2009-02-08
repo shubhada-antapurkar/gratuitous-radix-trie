@@ -52,6 +52,11 @@ extern "C" {
  *      'longest match' should never return an empty/branch node
  */
 
+#define DEBUG 1
+
+#define grat_log(msg) if (DEBUG > 0) fprintf(stderr, "Error in %s at line %d(%s): %s\n", \
+        __FILE__, __LINE__, __func__, msg); 
+
 // STRING UTIL PROTOTYPES
 // FIXME: make this conditional on having/not having strlcat & co
 size_t _grat_trie_strlcpy(char *dst, const char *src, size_t siz);
@@ -86,12 +91,12 @@ typedef void(*trie_value_callback)(void *value);
 // PUBLIC METHOD DEFINITIONS/PROTOTYPES
 radix_t * trie_new ();
 void trie_destroy (radix_t *trie);
-void * trie_set (radix_t *root_node, const char *key, void *val );
-void * trie_get (radix_t *root_node, const char *key);
-void * trie_delete (radix_t *root_node, const char *key);
+void * trie_set_key (radix_t *root_node, const char *key, void *val );
+void * trie_get_key (radix_t *root_node, const char *key);
+void * trie_delete_key (radix_t *root_node, const char *key);
 void * trie_get_longest_match (radix_t *root_node, const char *key, char **remainder);
-int trie_recurse_prefix (radix_t *root_node, const char *prefix, trie_value_callback callback);
-int trie_recurse (radix_t *root_node, trie_value_callback callback);
+size_t trie_recurse_prefix (radix_t *root_node, const char *prefix, trie_value_callback callback);
+size_t trie_recurse (radix_t *root_node, trie_value_callback callback);
 
 // PRIVATE METHODS
 
@@ -184,7 +189,7 @@ _trie_get_longest_match (
         radix_t **partial_match_node,
         size_t *len_match
     ) {
-    int i;
+    size_t i;
     size_t match_len;
     char *path;
     
@@ -230,8 +235,29 @@ _trie_get_longest_match (
         }
     }
 
-    len_match = &match_len;
+    *len_match = match_len;
     return path;
+}
+
+// returns the value associated with the key, or NULL
+radix_t *
+_trie_get_node (radix_t *root_node, const char *key) {
+    char *remainder;
+    size_t len_match;
+    radix_t *full_match_node, *partial_match_node;
+
+    remainder = _trie_get_longest_match(root_node, key, &full_match_node,
+            &partial_match_node, &len_match);
+
+    if (remainder[0] == 0 && len_match != 0 && partial_match_node == full_match_node &&
+            full_match_node->key[len_match] == 0) {
+        // the path was matched completely:
+        //      * no remainder
+        //      * partial and full match are the same
+        return full_match_node;
+    }
+
+    return NULL;
 }
 
 // split one node into two, using the first 'len' bytes of the key to make the new parent
@@ -239,7 +265,7 @@ radix_t *
 _trie_split_node(radix_t *node, size_t len) {
     radix_t *new_child;
     char *new_key;
-    int i;
+    size_t i;
 
     // kind of a dumb check..  if this were true we would have found this node as a full match
     if (node->key[len] == 0) {
@@ -371,7 +397,6 @@ _trie_delete_node (radix_t *node) {
     return val;
 }
 
-/*
 int
 _trie_value_recurse (radix_t *start_node, trie_value_callback callback) {
     int num_found, depth;
@@ -492,7 +517,6 @@ _trie_next_node (radix_iterator_t *iter) {
 
     return iter->node;
 }
-*/
 
 // PUBLIC METHOD IMPLEMENTATIONS
 
@@ -513,14 +537,19 @@ trie_destroy (radix_t *root_node) {
 
 // returns the value that was set
 void *
-trie_set (radix_t *root_node, const char *key, void *val ) {
+trie_set_key (radix_t *root_node, const char *key, void *val ) {
     // FIXME: if node is being set to NULL, treat as delete(?)
-    return NULL;
+    radix_t *node;
+
+    node = _trie_get_or_create_node(root_node, key);
+    node->val = val;
+
+    return node->val;
 }
 
 // returns the value associated with the key, or NULL
 void *
-trie_get (radix_t *root_node, const char *key) {
+trie_get_key (radix_t *root_node, const char *key) {
     char *remainder;
     void *val;
 
@@ -533,7 +562,14 @@ trie_get (radix_t *root_node, const char *key) {
 
 // returns the value contained by key after deleting node
 void *
-trie_delete (radix_t *root_node, const char *key) {
+trie_delete_key (radix_t *root_node, const char *key) {
+    radix_t *node;
+
+    node = _trie_get_node(root_node, key);
+    if (node != NULL) {
+        return _trie_delete_node(node);
+    }
+
     return NULL;
 }
 
@@ -561,14 +597,14 @@ trie_get_longest_match (radix_t *root_node, const char *key, char **full_match_r
 // returns how many nodes matching a given prefix were affected by a functionn pointer calback that
 // takes in the node's value.  Should have another function that calls this with no prefix in order
 // to apply callback to all nodes
-int
+size_t
 trie_recurse_prefix (radix_t *root_node, const char *prefix, trie_value_callback callback) {
     // get the longest partial match for prefix, use prefix as the root node
 
     return 0;
 }
 
-int
+size_t
 trie_recurse (radix_t *root_node, trie_value_callback callback) {
     return 0;
 }
