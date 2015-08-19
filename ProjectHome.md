@@ -1,0 +1,1 @@
+Simple and small C header-based library with a C++ wrapper.  Interfaces will include basic set/get, longest prefix, and iterator support.
